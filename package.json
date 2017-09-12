@@ -1,0 +1,19 @@
+{
+    "name": "bits-node-ipc",
+    "version": "1.0.0",
+    "dependencies": {
+        "node-ipc": "^9.1.1"
+    },
+    "module-dependencies": {
+        "bits": "^2.0.0"
+    },
+    "appDir": "app/",
+    "contentElement": "bits-node-ipc-app",
+    "contentImport": "/elements/bits-node-ipc-app/bits-node-ipc-app.html",
+    "scopes": [
+      {"name": "public", "displayName": "Public"}
+    ],
+    "displayName": "Node IPC",
+    "icon": "icons:favorite",
+    "category": "Utilities"
+}
