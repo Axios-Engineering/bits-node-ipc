@@ -17,6 +17,7 @@ limitations under the License.
 (() => {
   'use strict';
     
+  const EventEmitter = require('events');
   const fs = require('fs');
   const ipc = require('node-ipc');
   const logger = global.helper.LoggerFactory.getLogger();
@@ -37,6 +38,104 @@ limitations under the License.
     'addEventSubscriberListener',
     'removeEventSubscriberListener'
   ];
+
+  let pendingRequests = {};
+  let responseEmitter = new EventEmitter();
+
+  function handleIpcMessage(messageCenter, socket, msg) {
+    try {
+      if (msg.type === "event") {
+        // Events are easy, just forward them to the BITS message center
+        messageCenter.sendEvent(msg.event, ...msg.params);
+      } else if (msg.type === "request") {
+        // For requests we pass the request to the BITS message center
+        // tied to a callback with this socket.  When the BITS
+        // response comes back we forward it to IPC
+        messageCenter.sendRequest(msg.event, ...msg.params)
+        .then((...data) => {
+          ipc.server.emit(
+            socket,
+            'bits-ipc',
+            {
+              type: 'response',
+              event: msg.event,
+              responseId: msg.requestId,
+              err: null,
+              result: data
+            }
+          );
+        });
+      } else if (msg.type === "response") {
+        // For requests we pass the request to the BITS message center
+        // tied to a callback with this socket.  When the BITS
+        // response comes back we forward it to IPC
+        responseEmitter.emit(msg.event, msg.responseId, msg.err, msg.params);
+      } else if (msg.type === "addEventListener") {
+        let scope = msg.params[0];
+        let listener = (...data) => { 
+          if (!socket.destroyed) {
+            // if the socket is still active, sent the event
+            ipc.server.emit(
+              socket,
+              'bits-ipc',
+              {
+                type: 'event',
+                event: msg.event,
+                params: data
+              }
+            );
+          } else {
+            // otherwise remove this listener
+            messageCenter.removeEventListener(msg.event, listener);
+          }
+        }
+        messageCenter.addEventListener(msg.event, scope, listener);
+      } else if (msg.type === "addRequestListener") {
+        let scope = msg.params[0];
+        let listener = (metadata, ...data) => { 
+          if (!socket.destroyed) {
+            // if the socket is still active, sent the event
+            ipc.server.emit(
+              socket,
+              'bits-ipc',
+              {
+                type: 'request',
+                requestId: metadata.requestId,
+                event: msg.event,
+                params: data
+              }
+            );
+
+
+            let responsePromise = new Promise((resolve, reject) => {
+              const handleIpcResponse = (responseId, err, result) => {
+                if (responseId === metadata.requestId) {
+                  responseEmitter.removeListener(msg.event, handleIpcResponse);
+                  if (err) {
+                    reject(err);
+                  } else {
+                    resolve(result);
+                  }
+                }
+              };
+              responseEmitter.on(msg.event, handleIpcResponse);
+
+            });
+
+            return responsePromise;
+          } else {
+            // otherwise remove this listener
+            messageCenter.removeRequestListener(msg.event, listener);
+            return Promise.resolve();
+          }
+        }
+        messageCenter.addRequestListener(msg.event, scope, listener);
+      }
+    } catch (err) {
+      logger.warn('Failed to send IPC message', err);
+      return;
+    }
+  }
 
   function startIpcServer(messageCenter) {
     return messageCenter.sendRequest('base#System bitsId')
@@ -60,30 +159,7 @@ limitations under the License.
         logger.debug('Received IPC message', msg);
  
         if (msg && validMessageTypes.includes(msg.type)) {
-          try {
-            if (msg.type === "event") {
-              messageCenter.sendEvent(msg.event, ...msg.params);
-            } else if (msg.type === "request") {
-              messageCenter.sendRequest(msg.event, ...msg.params)
-              .then((...data) => {
-                console.log("response", ...data);
-                ipc.server.emit(
-                  socket,
-                  'bits-ipc',
-                  {
-                    type: 'response',
-                    event: msg.event,
-                    responseId: msg.requestId,
-                    err: null,
-                    result: data
-                  }
-                );
-              });;
-            }
-          } catch (err) {
-            logger.warn('Failed to send IPC message', err);
-            return;
-          }
+          handleIpcMessage(messageCenter, socket, msg);
         } else {
           logger.warn('Ignoring invalid message');
         }
@@ -109,11 +185,21 @@ limitations under the License.
     load(messageCenter) {
       console.log('Loading Node IPC');
       return startIpcServer(messageCenter)
-      .then(() => this._messenger.load(messageCenter));
-//      .then(() => messageCenter.sendRequest('tutorials-message-center#Cat create', {scopes: ['public']}, {type: 'loaded'}))
-//      .then(() => messageCenter.sendRequest('myRequest', {scopes: null}, 'Nic', 'Mike'))
-//      .then(() => messageCenter.sendEvent('myEvent', {scopes: null}, 'Nic'));
+      .then(() => this._messenger.load(messageCenter))
+      .then(() => this.startHeartbeat(messageCenter));
+    }
 
+    startHeartbeat(messageCenter) {
+      setInterval(() => {
+        console.log("sending heartbeat");
+        messageCenter.sendEvent('bits-ipc#heartbeat', {scopes: null}, Date.now())
+        console.log("sending ping");
+        messageCenter.sendRequest('bits-ipc#ping', {scopes: null}, Date.now())
+        .then((result) => {
+            console.log("got pong", result);
+        })
+        .catch((err) => { console.log(err) });
+      }, 1000);
     }
 
     unload() {
