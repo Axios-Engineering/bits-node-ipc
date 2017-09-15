@@ -178,7 +178,7 @@ limitations under the License.
     constructor() {
       this._messenger = new global.helper.Messenger();
       this._messenger.addEventListener('bits-ipc#Client connected', {scopes: null}, (name) => {
-        console.log("IPC client connected");
+        logger.info("IPC client connected");
       });
     }
 
@@ -191,12 +191,10 @@ limitations under the License.
 
     startHeartbeat(messageCenter) {
       setInterval(() => {
-        console.log("sending heartbeat");
         messageCenter.sendEvent('bits-ipc#heartbeat', {scopes: null}, Date.now())
-        console.log("sending ping");
         messageCenter.sendRequest('bits-ipc#ping', {scopes: null}, Date.now())
         .then((result) => {
-            console.log("got pong", result);
+          // TODO update a watchdog?
         })
         .catch((err) => { console.log(err) });
       }, 1000);
