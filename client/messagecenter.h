@@ -23,9 +23,6 @@ using json = nlohmann::json;
 /*
  * Variadic template for pushing arguments onto a JSON array
  */
-void concatArgs(json &holder) {
-}
-
 template<typename T>
 void concatArgs(json &holder, T t) {
     holder.push_back(t);
@@ -54,6 +51,8 @@ class MessageCenter {
     // Public Methods
     public:
 
+        MessageCenter() : MessageCenter("") {}
+   
         /**
          * MessageCenter constructor
          */
@@ -82,6 +81,10 @@ class MessageCenter {
          * the MessageCenter to work correctly.
          */
         bool start(bool async=true) {
+            if (_socket_path.size() == 0) {
+                return false;
+            }
+
             // Create the socket and connect to the BITS server
             if ( (_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
                 perror("socket error");
@@ -160,6 +163,53 @@ class MessageCenter {
         }
 
         /**
+         * Send an request to BITS with no args
+         */
+        template<typename... Args>
+        json sendRequest(const std::string &request, const std::vector<std::string> scopes) {
+            std::string requestId = _getRequestId();
+            json msg;
+
+            msg["type"] = "bits-ipc";
+            msg["data"] = {};
+
+            msg["data"]["type"] = "request";
+            msg["data"]["event"] = request;
+            msg["data"]["requestId"] = requestId;
+            msg["data"]["params"] = { };
+
+            if (scopes.size() == 0) {
+                msg["data"]["params"].push_back( { { "scope", nullptr } } );
+            } else if (scopes.size() == 1) {
+                msg["data"]["params"].push_back( { { "scopes", { scopes[0] } } } );
+            } else {
+                msg["data"]["params"].push_back( { { "scopes", scopes } } );
+            }
+
+            this->_send(msg.dump());
+
+            std::mutex _resp_mutex;
+            json resp;
+
+            this->_addReponseListener(requestId, scopes, [&](const json &msg) {
+                std::lock_guard<std::mutex> lock(_resp_mutex); 
+                resp = msg;
+            });
+
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                {
+                    std::lock_guard<std::mutex> lock(_resp_mutex); 
+                    if (!resp.is_null()) {
+                        break;
+                    }
+                }
+            }
+
+            return resp;
+        }
+
+        /**
          * Send a request to BITS
          */
         template<typename... Args>
@@ -182,7 +232,7 @@ class MessageCenter {
             if (scopes.size() == 0) {
                 msg["data"]["params"].push_back( { { "scope", nullptr } } );
             } else if (scopes.size() == 1) {
-                msg["data"]["params"].push_back( { { "scope", scopes[0] } } );
+                msg["data"]["params"].push_back( { { "scopes", { scopes[0] } } } );
             } else {
                 msg["data"]["params"].push_back( { { "scopes", scopes } } );
             }
@@ -218,7 +268,32 @@ class MessageCenter {
          */
         template<typename... Args>
         bool sendEvent(const std::string &event, Args... args) {
-            sendEvent(event, {}, args...);
+            return sendEvent(event, {}, args...);
+        }
+
+        /**
+         * Send an event to BITS with no args
+         */
+        template<typename... Args>
+        bool sendEvent(const std::string &event, const std::vector<std::string> scopes) {
+            json msg;
+
+            msg["type"] = "bits-ipc";
+            msg["data"] = {};
+
+            msg["data"]["type"] = "event";
+            msg["data"]["event"] = event;
+            msg["data"]["params"] = { };
+
+            if (scopes.size() == 0) {
+                msg["data"]["params"].push_back( { { "scope", nullptr } } );
+            } else if (scopes.size() == 1) {
+                msg["data"]["params"].push_back( { { "scopes", { scopes[0] } } } );
+            } else {
+                msg["data"]["params"].push_back( { { "scopes", scopes } } );
+            }
+
+            return this->_send(msg.dump());
         }
 
         /**
@@ -242,7 +317,7 @@ class MessageCenter {
             if (scopes.size() == 0) {
                 msg["data"]["params"].push_back( { { "scope", nullptr } } );
             } else if (scopes.size() == 1) {
-                msg["data"]["params"].push_back( { { "scope", scopes[0] } } );
+                msg["data"]["params"].push_back( { { "scopes", { scopes[0] } } } );
             } else {
                 msg["data"]["params"].push_back( { { "scopes", scopes } } );
             }
@@ -318,7 +393,7 @@ class MessageCenter {
             if (scopes.size() == 0) {
                 msg["data"]["params"].push_back( { { "scopes", nullptr } } );
             } else if (scopes.size() == 1) {
-                msg["data"]["params"].push_back( { { "scopes", scopes[0] } } );
+                msg["data"]["params"].push_back( { { "scopes", { scopes[0] } } } );
             } else {
                 msg["data"]["params"].push_back( { { "scopes", scopes } } );
             }
@@ -489,6 +564,7 @@ class MessageCenter {
          * Prevent assignment
          */
         MessageCenter& operator=(MessageCenter) {
+            return *this;
         }
 
 };
