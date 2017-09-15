@@ -64,6 +64,9 @@ limitations under the License.
               result: data
             }
           );
+        })
+        .catch((err) => {
+          logger.error('error on request', err);
         });
       } else if (msg.type === "response") {
         // For requests we pass the request to the BITS message center
